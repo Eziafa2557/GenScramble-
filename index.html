@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0a0a0a" />
+<title>GenScramble</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ HOME ============ -->
+  <section class="screen" id="screen-home">
+    <header class="hero">
+      <h1 class="title">GenScramble</h1>
+      <p class="subtitle">Unscramble 20 GenLayer words. Tap tiles. No submit.</p>
+    </header>
+    <div class="card stack">
+      <button type="button" class="btn btn-primary" data-go="create">Create Room</button>
+      <button type="button" class="btn" data-go="join">Join Room</button>
+      <button type="button" class="btn btn-ghost" id="btn-solo">Solo run</button>
+    </div>
+    <p class="fineprint">20 words · 3:00 default · no keyboard, ever</p>
+  </section>
+
+  <!-- ============ CREATE ROOM ============ -->
+  <section class="screen" id="screen-create">
+    <header class="bar">
+      <button type="button" class="ghost-btn" data-go="home">Back</button>
+      <span class="bar-title">Create Room</span>
+      <span class="bar-spacer"></span>
+    </header>
+    <div class="card stack">
+      <label class="field">
+        <span class="label">YOUR NAME</span>
+        <input id="create-name" class="input" type="text" maxlength="14" placeholder="e.g. Ava" autocomplete="off" autocapitalize="words" />
+      </label>
+      <div class="field">
+        <span class="label">DURATION</span>
+        <div class="seg" id="create-duration">
+          <button type="button" class="seg-btn" data-ms="120000">2:00</button>
+          <button type="button" class="seg-btn is-on" data-ms="180000">3:00</button>
+          <button type="button" class="seg-btn" data-ms="300000">5:00</button>
+        </div>
+      </div>
+      <button type="button" class="btn btn-primary" id="btn-create">Create</button>
+      <p class="chip-error" id="create-error" hidden></p>
+    </div>
+    <p class="fineprint">You will be the host. Everyone in the room gets the same 20 words.</p>
+  </section>
+
+  <!-- ============ JOIN ROOM ============ -->
+  <section class="screen" id="screen-join">
+    <header class="bar">
+      <button type="button" class="ghost-btn" data-go="home">Back</button>
+      <span class="bar-title">Join Room</span>
+      <span class="bar-spacer"></span>
+    </header>
+    <div class="card stack">
+      <label class="field">
+        <span class="label">ROOM CODE</span>
+        <input id="join-code" class="input input-code" type="text" maxlength="4" placeholder="ABCD" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+      </label>
+      <label class="field">
+        <span class="label">YOUR NAME</span>
+        <input id="join-name" class="input" type="text" maxlength="14" placeholder="e.g. Sam" autocomplete="off" autocapitalize="words" />
+      </label>
+      <button type="button" class="btn btn-primary" id="btn-join">Join</button>
+      <p class="chip-error" id="join-error" hidden></p>
+    </div>
+  </section>
+
+  <!-- ============ WAITING ROOM ============ -->
+  <section class="screen" id="screen-waiting">
+    <header class="bar">
+      <button type="button" class="ghost-btn" id="btn-waiting-leave">Leave</button>
+      <span class="bar-title">Waiting Room</span>
+      <span class="bar-spacer"></span>
+    </header>
+    <div class="card stack center">
+      <p class="label">ROOM CODE</p>
+      <div class="code" id="room-code">----</div>
+      <button type="button" class="btn btn-ghost" id="btn-copy">Copy Code</button>
+      <p class="ready" id="ready-count">1 player ready</p>
+      <ul class="players" id="players-list"></ul>
+      <button type="button" class="btn btn-primary" id="btn-start" hidden>Start Race</button>
+      <p class="waiting-copy" id="waiting-copy">Waiting for the host to start…</p>
+    </div>
+  </section>
+
+  <!-- ============ PLAY ============ -->
+  <section class="screen" id="screen-play">
+    <header class="play-top">
+      <button type="button" class="ghost-btn" id="btn-play-leave">Leave</button>
+      <span class="play-title">GenScramble</span>
+      <span class="clock" id="clock">3:00</span>
+    </header>
+
+    <div class="card word-card">
+      <div class="word-meta">
+        <span id="word-counter">WORD 1 / 20</span>
+        <span id="word-length">7 letters</span>
+      </div>
+      <div class="progress"><div class="progress-fill" id="progress-fill"></div></div>
+      <p class="muted-label">ARRANGE THE LETTERS</p>
+      <div class="answer-row" id="answer-row"></div>
+    </div>
+
+    <div class="card">
+      <div class="tray-head">
+        <span class="muted-label">TRAY</span>
+        <button type="button" class="btn btn-cta" id="btn-shuffle">Shuffle tray</button>
+      </div>
+      <div class="tray" id="tray"></div>
+    </div>
+
+    <div class="play-foot">
+      <div class="next-preview" id="next-preview">NEXT · 8 letters</div>
+      <div class="words-list" id="words-list"></div>
+    </div>
+  </section>
+
+  <!-- ============ RESULTS ============ -->
+  <section class="screen" id="screen-results">
+    <div class="card stack center">
+      <h2 class="title title-sm" id="result-title">Race over</h2>
+      <p class="subtitle" id="result-sub"></p>
+      <div class="stats">
+        <div class="stat"><span class="stat-num" id="stat-correct">0/20</span><span class="stat-label">CORRECT</span></div>
+        <div class="stat"><span class="stat-num" id="stat-time">0:00</span><span class="stat-label">TIME USED</span></div>
+      </div>
+    </div>
+    <div class="card" id="rank-card" hidden>
+      <p class="label">RANKED</p>
+      <ol class="rank" id="rank-list"></ol>
+    </div>
+    <div class="card">
+      <p class="label">ALL 20 WORDS</p>
+      <ul class="reveal" id="reveal-list"></ul>
+    </div>
+    <div class="stack">
+      <button type="button" class="btn btn-primary" id="btn-again">Play Again</button>
+      <button type="button" class="btn btn-ghost" id="btn-results-home">Home</button>
+    </div>
+  </section>
+
+  <div class="toast" id="toast" hidden></div>
+</div>
+
+<script src="js/words.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/scramble.js"></script>
+<script src="js/timer.js"></script>
+<script src="js/game.js"></script>
+<script src="js/rooms.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
