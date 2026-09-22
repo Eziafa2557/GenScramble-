@@ -1,6 +1,11 @@
 /* GenScramble — app wiring.
    Screens, taps and the race lifecycle. All game rules live in game.js,
-   all rooms in rooms.js, all DOM in ui.js, all timing in timer.js. */
+   all rooms in rooms.js, all DOM in ui.js, all timing in timer.js.
+
+   Room calls are asynchronous now (Firebase Realtime Database), so Create, Join,
+   Start, Leave, patchProgress and getRoom all go through .then(). GSRooms promises
+   always RESOLVE, so the rule is "check res.ok"; .catch() is only a last-resort
+   guard against an unexpected throw. The tile game itself is untouched. */
 
 (function () {
   "use strict";
@@ -16,10 +21,15 @@
     durationMs: 180000,
     createDurationMs: 180000,
     raceOver: true,
-    solveHandle: null
+    solveHandle: null,
+    raceStartedKey: null  /* "<code>:<startedAt>" — the Start button and the live room both land here */
   };
 
   var DEFAULT_DURATION = 180000;
+
+  function warn(where, err) {
+    if (window.console && window.console.warn) window.console.warn("GenScramble: " + where, err);
+  }
 
   /* ================= navigation ================= */
 
@@ -31,10 +41,16 @@
   function resetToHome() {
     stopTimer();
     cancelSolveTimer();
+    leaveRoomChannel();
     S.raceOver = true;
     S.game = null;
     S.roomCode = null;
     S.mode = "solo";
+    S.raceStartedKey = null;
+  }
+
+  function leaveRoomChannel() {
+    if (S.roomCode) GSRooms.unsubscribe(S.roomCode);
   }
 
   /* ================= race lifecycle ================= */
@@ -68,6 +84,7 @@
     S.roomCode = null;
     S.me = GSStorage.loadName() || "You";
     S.durationMs = DEFAULT_DURATION;
+    S.raceStartedKey = null;
     S.game = GSGame.createGame({
       words: GSScramble.pickWords(GS_wordsInRange(), GSRooms.WORDS_PER_RACE),
       durationMs: S.durationMs
@@ -81,6 +98,12 @@
   }
 
   function beginRoomRace(room) {
+    /* The host's Start button and the live room update both reach this, and the
+       order depends on the network — so the first one wins and the other is a no-op. */
+    var key = room.code + ":" + room.startedAt;
+    if (S.raceStartedKey === key) return;
+    S.raceStartedKey = key;
+
     S.mode = "room";
     S.roomCode = room.code;
     S.durationMs = room.durationMs;
@@ -114,7 +137,7 @@
         solved: res.solved,
         timeUsedMs: res.timeUsedMs,
         finishedAt: g.finishedAt
-      });
+      }).catch(function (err) { warn("patchProgress", err); });
     } else {
       GSStorage.addSoloRun({
         solved: res.solved,
@@ -125,32 +148,46 @@
       });
     }
 
-    renderResults(res, g);
+    renderResults(res);
     GSUI.showScreen("results");
   }
 
-  function renderResults(res, g) {
-    var room = S.mode === "room" && S.roomCode ? GSRooms.getRoom(S.roomCode) : null;
-
-    var subtitle = res.solved + " of " + res.total + " unscrambled in " +
+  function resultSubtitle(res, isRoom) {
+    var text = res.solved + " of " + res.total + " unscrambled in " +
       GSTimer.formatClock(res.timeUsedMs) + ".";
 
-    if (!room) {
+    if (!isRoom) {
       var best = bestSoloTime();
-      if (best !== null && res.timeUsedMs <= best) subtitle += " New personal best.";
-      else if (best !== null) subtitle += " Best: " + GSTimer.formatClock(best) + ".";
+      if (best !== null && res.timeUsedMs <= best) text += " New personal best.";
+      else if (best !== null) text += " Best: " + GSTimer.formatClock(best) + ".";
     }
+    return text;
+  }
 
-    GSUI.renderResults({
+  function renderResults(res) {
+    var isRoom = S.mode === "room" && !!S.roomCode;
+
+    var view = {
       title: res.completedAll ? "You unscrambled all " + res.total : "Timer ended. Score locked.",
-      subtitle: subtitle,
+      subtitle: resultSubtitle(res, isRoom),
       solved: res.solved,
       total: res.total,
       timeUsedMs: res.timeUsedMs,
       words: res.words,
-      ranked: room ? GSRooms.ranked(room) : null,
+      ranked: null,
       me: S.me
-    });
+    };
+
+    /* Paint the score at once; the ranking lands as soon as the room does. */
+    GSUI.renderResults(view);
+    if (!isRoom) return;
+
+    var code = S.roomCode;
+    GSRooms.getRoom(code).then(function (room) {
+      if (!room || GSUI.currentScreen() !== "results") return;
+      view.ranked = GSRooms.ranked(room);
+      GSUI.renderResults(view);
+    }).catch(function (err) { warn("results ranking", err); });
   }
 
   function bestSoloTime() {
@@ -175,9 +212,11 @@
     });
     S.game = game;
     GSGame.start(game);
+    S.raceStartedKey = null;
 
     if (S.mode === "room" && S.roomCode) {
-      GSRooms.patchProgress(S.roomCode, S.me, { solved: 0, timeUsedMs: null, finishedAt: null });
+      GSRooms.patchProgress(S.roomCode, S.me, { solved: 0, timeUsedMs: null, finishedAt: null })
+        .catch(function (err) { warn("patchProgress", err); });
     }
 
     GSUI.renderBoard(game);
@@ -245,11 +284,30 @@
     S.roomCode = room.code;
     GSUI.renderWaiting(room, S.me);
     GSUI.showScreen("waiting");
+    GSRooms.subscribe(room.code, onRoomUpdate);
   }
 
-  function refreshWaiting() {
-    if (GSUI.currentScreen() !== "waiting" || !S.roomCode) return;
-    GSUI.renderWaiting(GSRooms.getRoom(S.roomCode), S.me);
+  /* The room changed on the server: another player joined, or the host started. */
+  function onRoomUpdate(room) {
+    if (!room) {
+      /* Deleted because everyone left, or older than six hours. */
+      if (GSUI.currentScreen() === "waiting") {
+        GSRooms.unsubscribe(S.roomCode);
+        S.roomCode = null;
+        S.mode = "solo";
+        S.raceOver = true;
+        GSUI.toast("That room is gone.");
+        go("home");
+      }
+      return;
+    }
+
+    /* Only the waiting room follows the server. The play and results screens are
+       driven locally, so a late update must not restart anything. */
+    if (GSUI.currentScreen() !== "waiting") return;
+
+    GSUI.renderWaiting(room, S.me);
+    if (room.status === "racing") beginRoomRace(room);
   }
 
   function showError(id, message) {
@@ -287,13 +345,26 @@
     });
 
     $("btn-create").addEventListener("click", function () {
+      var btn = $("btn-create");
       var name = GSRooms.normalizeName($("create-name").value);
-      var res = GSRooms.createRoom({ hostName: name, durationMs: S.createDurationMs });
-      if (!res.ok) { showError("create-error", res.error); return; }
-      showError("create-error", "");
-      S.me = name;
-      GSStorage.saveName(name);
-      enterWaiting(res.room);
+      btn.disabled = true;
+      GSRooms.createRoom({ hostName: name, durationMs: S.createDurationMs })
+        .then(function (res) {
+          btn.disabled = false;
+          if (!res || !res.ok) {
+            showError("create-error", (res && res.error) || "Could not create the room.");
+            return;
+          }
+          showError("create-error", "");
+          S.me = res.room.hostName;
+          GSStorage.saveName(S.me);
+          enterWaiting(res.room);
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          warn("createRoom", err);
+          showError("create-error", "Could not create the room. Check your connection.");
+        });
     });
 
     /* join */
@@ -302,14 +373,27 @@
     });
 
     $("btn-join").addEventListener("click", function () {
+      var btn = $("btn-join");
       var code = GSRooms.normalizeCode($("join-code").value);
       var name = GSRooms.normalizeName($("join-name").value);
-      var res = GSRooms.joinRoom(code, name);
-      if (!res.ok) { showError("join-error", res.error); return; }
-      showError("join-error", "");
-      S.me = name;
-      GSStorage.saveName(name);
-      enterWaiting(res.room);
+      btn.disabled = true;
+      GSRooms.joinRoom(code, name)
+        .then(function (res) {
+          btn.disabled = false;
+          if (!res || !res.ok) {
+            showError("join-error", (res && res.error) || "Could not join the room.");
+            return;
+          }
+          showError("join-error", "");
+          S.me = name;
+          GSStorage.saveName(name);
+          enterWaiting(res.room);
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          warn("joinRoom", err);
+          showError("join-error", "Could not join the room. Check your connection.");
+        });
     });
 
     /* waiting room */
@@ -326,14 +410,29 @@
     });
 
     $("btn-start").addEventListener("click", function () {
-      var res = GSRooms.startRoom(S.roomCode);
-      if (!res.ok) { GSUI.toast(res.error); return; }
-      beginRoomRace(res.room);
+      var btn = $("btn-start");
+      btn.disabled = true;
+      GSRooms.startRoom(S.roomCode)
+        .then(function (res) {
+          btn.disabled = false;
+          if (!res || !res.ok) {
+            GSUI.toast((res && res.error) || "Could not start the race.");
+            return;
+          }
+          beginRoomRace(res.room);
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          warn("startRoom", err);
+          GSUI.toast("Could not start the race. Check your connection.");
+        });
     });
 
     $("btn-waiting-leave").addEventListener("click", function () {
-      GSRooms.leaveRoom(S.roomCode || "", S.me);
-      go("home");
+      var code = S.roomCode || "";
+      var me = S.me;
+      go("home");                     /* leaves the channel */
+      GSRooms.leaveRoom(code, me).catch(function (err) { warn("leaveRoom", err); });
     });
 
     /* play */
@@ -341,7 +440,8 @@
       var leaving = window.confirm("Leave this race? Your progress will be lost.");
       if (!leaving) return;
       if (S.mode === "room" && S.roomCode) {
-        GSRooms.patchProgress(S.roomCode, S.me, { solved: S.game ? S.game.solved : 0 });
+        GSRooms.patchProgress(S.roomCode, S.me, { solved: S.game ? S.game.solved : 0 })
+          .catch(function (err) { warn("patchProgress", err); });
       }
       go("home");
     });
@@ -353,11 +453,6 @@
     /* results */
     $("btn-again").addEventListener("click", playAgain);
     $("btn-results-home").addEventListener("click", function () { go("home"); });
-
-    /* another tab joined — keep the waiting room honest on one device */
-    window.addEventListener("storage", function (event) {
-      if (event.key === GSStorage.KEYS.rooms) refreshWaiting();
-    });
 
     /* Never let a stray keypress drag up a keyboard on the play screen. */
     document.addEventListener("keydown", function (event) {

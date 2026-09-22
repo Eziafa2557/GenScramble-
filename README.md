@@ -48,7 +48,8 @@ genscramble/
 ├── js/scramble.js      seeded shuffle, word picking, room codes
 ├── js/timer.js         wall-clock race timer
 ├── js/game.js          the rules: taps, checks, scoring (no DOM)
-├── js/rooms.js         create / join / start / progress / ranked
+├── js/config.js        the Firebase project config (window.GS_FIREBASE)
+├── js/rooms.js         create / join / start / progress / ranked / live updates
 ├── js/ui.js            every DOM write
 └── js/app.js           screen wiring + race lifecycle
 ```
@@ -56,6 +57,17 @@ genscramble/
 Classic `<script src>` tags, no ES modules, so `file://` works.
 Every module exposes itself on `window`: `GS_WORDS`, `GSStorage`, `GSScramble`,
 `GSTimer`, `GSGame`, `GSRooms`, `GSUI`.
+
+`index.html` also loads the Firebase **compat** SDK from gstatic, directly above
+`js/rooms.js`:
+
+```html
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+<script src="js/config.js"></script>
+```
+
+Those are plain `<script>` tags — no `type="module"`, no bundler, no npm.
 
 ---
 
@@ -65,8 +77,8 @@ Every module exposes itself on `window`: `GS_WORDS`, `GSStorage`, `GSScramble`,
 2. Create `css/` and `js/` inside it.
 3. Paste each file at the path shown above, in this order:
    `index.html` → `css/styles.css` → `js/words.js` → `js/storage.js` →
-   `js/scramble.js` → `js/timer.js` → `js/game.js` → `js/rooms.js` →
-   `js/ui.js` → `js/app.js` → `README.md`.
+   `js/scramble.js` → `js/timer.js` → `js/game.js` → `js/config.js` →
+   `js/rooms.js` → `js/ui.js` → `js/app.js` → `README.md`.
 4. Open `index.html` → Preview (or "Open in browser").
 5. Landscape is not needed. Portrait on a ~400px wide screen is the target.
 
@@ -92,11 +104,24 @@ If you'd rather serve it under a path on an existing site, drop the folder in as
 
 ---
 
-## How rooms work in v1
+## How rooms work
 
-Rooms are real, but they live in **`localStorage` under `genscramble.rooms`** on the device
-that created them. That makes the entire flow — create, join, start, progress, ranked
-results — genuinely testable on one phone (open a second browser tab to see a player join).
+Rooms live in **Firebase Realtime Database** at `rooms/{CODE}`, so two phones with the
+same 4-letter code play the same race. The databaseURL is
+`https://genscramble-default-rtdb.europe-west1.firebasedatabase.app`.
+
+- **Create** claims a code with a transaction, so two hosts can never take the same one.
+- **Waiting room** subscribes to `rooms/{CODE}` (`GSRooms.subscribe`). When a player joins
+  the list updates with no interaction; when the host starts, every waiting phone follows
+  into the race automatically.
+- **Progress** is written per player (`patchProgress`) when a race ends and when you leave
+  mid-race, and the results screen re-reads the room to build the ranking.
+- Going Home calls `GSRooms.unsubscribe`. Rooms untouched for **6 hours are ignored**.
+
+**If Firebase is unavailable** — SDK blocked, offline, or `file://` — `rooms.js` falls back
+to the original `localStorage` implementation (`genscramble.rooms`) with the identical
+API, so Create, Join, Start and Solo all still work on one device. If two phones can't see
+each other's rooms, check the browser console: the fallback is silent by design.
 
 The room shape:
 
@@ -123,15 +148,22 @@ The room shape:
 }
 ```
 
+Two things the database does that the code accounts for: a `null` field is **deleted**
+rather than stored, so `timeUsedMs: null` means "no result yet" by absence; and a node whose
+keys are all `0,1,2…` comes back as an **array**, so `players` is normalised on every read.
+
+A player's name is also their key under `players`, and Realtime Database keys may not
+contain `. # $ / [ ]` — those are stripped from names as they are typed.
+
 Every player gets the same 20 words in the same order but a **different tray scramble**,
 because the tray is shuffled from `hash(room.scrambleSeed + ":" + wordIndex + ":" + word)`
 mixed with that player's own seed. Same inputs, same board — reproducible.
 
-### Swapping rooms for a real backend
+### The rooms.js contract
 
-`js/rooms.js` is the only file that touches room storage. Its public functions are all
-`(code, data) → result`, so replacing the localStorage body with `fetch()` calls should
-not require a single change in `ui.js` or `app.js`:
+`js/rooms.js` is the only file that touches room storage, and every function that touches
+it returns a **Promise that resolves** — failures come back as `{ ok: false, error }`, so
+callers check `res.ok` rather than catching:
 
 ```js
 GSRooms.createRoom({ hostName, durationMs })   // -> { ok, room } | { ok:false, error }
@@ -139,12 +171,14 @@ GSRooms.joinRoom(code, name)                   // -> { ok, room } | { ok:false, 
 GSRooms.startRoom(code)                        // -> { ok, room }
 GSRooms.patchProgress(code, name, patch)       // -> { ok, room, player }
 GSRooms.getRoom(code)                          // -> room | null
-GSRooms.ranked(room)                           // -> sorted [{ name, solved, timeUsedMs }]
-GSRooms.playerSeed(room, name)                 // -> this player's tray seed
+GSRooms.subscribe(code, onRoom)                // -> live updates; onRoom(null) when gone
+GSRooms.unsubscribe(code)
+GSRooms.ranked(room)                           // -> sorted [{ name, solved, timeUsedMs }]  (sync)
+GSRooms.playerSeed(room, name)                 // -> this player's tray seed              (sync)
 ```
 
-A Firebase or WebSocket implementation must keep those five signatures and the room shape
-above. Nothing else in the app reads storage directly.
+Nothing else in the app reads room storage directly, so moving to Firestore, a socket
+server or a GenLayer contract means rewriting this one file and keeping those signatures.
 
 ---
 
@@ -160,17 +194,18 @@ window.GS_WORDS = ["INVARIANT", "ADJUDICATION", "YOURNEWWORD"];
 
 ---
 
-## v1 limits (all deliberate)
+## Limits (all deliberate)
 
-- **Rooms are per-device.** Real-time play across two phones needs a backend — see above.
-- One race at a time; only one player's progress is written per device.
+- **Anyone with the URL can read and write the database** — the rules are open. Fine for a
+  game with nothing valuable in it; tighten them before you put anything real here.
+- A room code is the only access control. There are no accounts and no auth.
 - Words are drawn fresh per race from a bank of 48 GenLayer terms. No difficulty tiers yet.
 - Landscape and desktop work, but the layout is tuned for a portrait phone.
 
-## v2 roadmap
+## Next
 
-- Firebase (or a small socket server) behind the same `rooms.js` contract for real multiplayer.
-- A GenLayer Intelligent Contract to record race results on-chain — the word bank is already
-  GenLayer-flavoured for exactly that reason.
+- A GenLayer Intelligent Contract to record race results on-chain — the word bank is
+  already GenLayer-flavoured for exactly that reason.
 - Daily seeded challenge (one word list, everyone, same seed).
 - Sound and haptics on solve.
+- Auth (anonymous or Google) so names can't be taken by whoever types them first.
