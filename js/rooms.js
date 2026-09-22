@@ -10,9 +10,8 @@
    res.ok; it never needs a .catch() (though one does no harm). ranked() and
    playerSeed() are pure and stay synchronous.
 
-   Only the classic callback API of the compat SDK is used (once/set/update/remove/
-   transaction with callbacks), because that surface is identical on every 10.x
-   compat build. */
+   Only the classic callback API of the compat SDK is used (once/set/update/remove/on/off
+   with callbacks), because that surface is identical on every 10.x compat build. */
 
 window.GSRooms = (function () {
 
@@ -28,8 +27,41 @@ window.GSRooms = (function () {
 
   function resolve(value) { return Promise.resolve(value); }
 
-  function guard(promise, fallback) {
-    return promise.then(null, function () { return fallback; });
+  function report(where, err) {
+    if (window.console && window.console.warn) {
+      window.console.warn("GenScramble rooms: " + where + " failed", err);
+    }
+  }
+
+  /* A failure should say something the player can act on, and the raw error is
+     always logged, so a bare "Network error" can never hide the real reason. */
+  function describe(err) {
+    var message = err && err.message ? String(err.message) : "";
+    var code = err && err.code ? String(err.code) : "";
+    var all = code + " " + message;
+
+    if (/no free room code/i.test(message)) return "Could not find a free room code. Try again.";
+    if (/permission[_ ]denied/i.test(all)) return "Permission denied. Check the database rules.";
+    if (/not found|not_found|404|no such|does not exist/i.test(all)) {
+      return "Database not found. Check databaseURL in js/config.js.";
+    }
+    return NETWORK_ERROR;
+  }
+
+  /* For calls that answer with { ok, room }. */
+  function guardOk(promise, where) {
+    return promise.then(null, function (err) {
+      report(where, err);
+      return { ok: false, error: describe(err) };
+    });
+  }
+
+  /* For calls that answer with a bare value: a room, null, or a list. */
+  function guard(promise, fallback, where) {
+    return promise.then(null, function (err) {
+      report(where, err);
+      return fallback;
+    });
   }
 
   /* ---------- codes and names ---------- */
@@ -94,14 +126,6 @@ window.GSRooms = (function () {
     });
   }
 
-  function runTransaction(ref, apply) {
-    return new Promise(function (done, fail) {
-      ref.transaction(apply, function (err, committed) {
-        if (err) fail(err); else done(!!committed);
-      }, false);
-    });
-  }
-
   function roomRef(database, code) {
     return database.ref(ROOT + "/" + code);
   }
@@ -124,18 +148,27 @@ window.GSRooms = (function () {
       .filter(function (v) { return v !== null && v !== undefined; });
   }
 
-  /* players{} is keyed by player name. A key like "__proto__" would otherwise hit
-     the prototype setter, so the map is rebuilt on a null prototype. */
+  /* A plain object, but a name like "__proto__" or "constructor" would hit the
+     inherited setter instead of adding a key — so every write goes through
+     defineProperty, which always makes an ordinary own property. */
+  function setKey(object, key, value) {
+    Object.defineProperty(object, key, {
+      value: value, enumerable: true, writable: true, configurable: true
+    });
+    return object;
+  }
+
+  /* players{} is keyed by player name. */
   function playersMap(raw) {
-    var map = Object.create(null);
+    var map = {};
     if (!raw || typeof raw !== "object") return map;
     if (Array.isArray(raw)) {
       raw.forEach(function (p) {
-        if (p && typeof p === "object" && p.name) map[normalizeName(p.name)] = p;
+        if (p && typeof p === "object" && p.name) setKey(map, normalizeName(p.name), p);
       });
       return map;
     }
-    Object.keys(raw).forEach(function (key) { map[key] = raw[key]; });
+    Object.keys(raw).forEach(function (key) { setKey(map, key, raw[key]); });
     return map;
   }
 
@@ -179,20 +212,20 @@ window.GSRooms = (function () {
     return now() - room.createdAt > MAX_AGE_MS;
   }
 
+  /* Players start with no result, and a null field is not something the database
+     needs to be told about — normalizePlayer reads a missing field as null. */
   function newPlayer(name, scrambleSeed) {
     return {
       name: name,
       solved: 0,
-      timeUsedMs: null,
-      finishedAt: null,
       scrambleSeed: GSScramble.hashCode(scrambleSeed + ":" + name.toLowerCase()),
       joinedAt: now()
     };
   }
 
   function newRoom(code, name, durationMs, scrambleSeed, words) {
-    var players = Object.create(null);
-    players[name] = newPlayer(name, scrambleSeed);
+    var players = {};
+    setKey(players, name, newPlayer(name, scrambleSeed));
     return {
       code: code,
       createdAt: now(),
@@ -201,31 +234,53 @@ window.GSRooms = (function () {
       status: "waiting",
       words: words,
       scrambleSeed: scrambleSeed,
-      startedAt: null,
       players: players
     };
   }
 
+  /* Anything written with set() goes through here first, so a null (or undefined)
+     field is never sent. The database drops nulls anyway, and a missing field reads
+     back as null, so sending them only risks the write being rejected. */
+  function withoutNulls(value) {
+    if (Array.isArray(value)) return value.map(withoutNulls);
+    if (value && typeof value === "object") {
+      var out = {};
+      Object.keys(value).forEach(function (key) {
+        var clean = withoutNulls(value[key]);
+        if (clean !== null && clean !== undefined) setKey(out, key, clean);
+      });
+      return out;
+    }
+    return value === undefined ? null : value;
+  }
+
   /* ---------- create ---------- */
 
-  /* Claim a code atomically: a room is only ours if the path was empty or holds an
-     abandoned room. Anything else aborts the transaction and we try another code. */
+  /* Pick a code nothing live is using, then set the room there. A plain write, not a
+     transaction: a transaction needs a server round trip before it can commit, and an
+     empty code path is the overwhelmingly common case. Two hosts picking the same code
+     in the same instant is the one race left, and whoever writes second wins it. */
   function claimRoom(database, name, durationMs, attempt) {
     var code = GSScramble.randomCode();
-    var room = newRoom(
-      code, name, durationMs,
-      GSScramble.makeSeed(),
-      GSScramble.pickWords(GS_wordsInRange(), WORDS_PER_RACE)
-    );
+    var ref = roomRef(database, code);
 
-    return runTransaction(roomRef(database, code), function (current) {
-      if (current === null || current === undefined) return room;
-      if (isStale(normalizeRoom(current))) return room;
-      return undefined;                            /* taken — abort */
-    }).then(function (committed) {
-      if (committed) return room;
-      if (attempt + 1 >= CODE_ATTEMPTS) throw new Error("no free code");
-      return claimRoom(database, name, durationMs, attempt + 1);
+    return readOnce(ref).then(function (snap) {
+      var existing = normalizeRoom(snap.val());
+      if (existing && !isStale(existing)) {
+        if (attempt + 1 >= CODE_ATTEMPTS) throw new Error("no free room code");
+        return claimRoom(database, name, durationMs, attempt + 1);
+      }
+
+      var room = newRoom(
+        code, name, durationMs,
+        GSScramble.makeSeed(),
+        GSScramble.pickWords(GS_wordsInRange(), WORDS_PER_RACE)
+      );
+      /* Send the null-free copy, hand back the full shape. The database does not
+         get told about fields that mean "nothing yet"; the caller still sees them. */
+      return writeOnce(ref, withoutNulls(room)).then(function () {
+        return normalizeRoom(room);
+      });
     });
   }
 
@@ -241,11 +296,11 @@ window.GSRooms = (function () {
       return resolve(localCreateRoom(name, durationMs));
     }
 
-    return guard(
+    return guardOk(
       claimRoom(database, name, durationMs, 0).then(function (room) {
         return { ok: true, room: room };
       }),
-      { ok: false, error: NETWORK_ERROR }
+      "createRoom"
     );
   }
 
@@ -261,7 +316,7 @@ window.GSRooms = (function () {
     var database = firebaseDatabase();
     if (!database) return resolve(localJoinRoom(key, name));
 
-    return guard(
+    return guardOk(
       readRoom(database, key).then(function (room) {
         if (isStale(room)) return { ok: false, error: NOT_FOUND };
         if (room.status !== "waiting") return { ok: false, error: "That race has already started." };
@@ -270,11 +325,11 @@ window.GSRooms = (function () {
         var player = newPlayer(name, room.scrambleSeed);
         return writeOnce(roomRef(database, key).child("players").child(name), player)
           .then(function () {
-            room.players[name] = player;
+            setKey(room.players, name, player);
             return { ok: true, room: room };
           });
       }),
-      { ok: false, error: NETWORK_ERROR }
+      "joinRoom"
     );
   }
 
@@ -288,7 +343,7 @@ window.GSRooms = (function () {
     var database = firebaseDatabase();
     if (!database) return resolve(localLeaveRoom(key, name));
 
-    return guard(
+    return guardOk(
       readRoom(database, key).then(function (room) {
         var ref = roomRef(database, key);
         if (!room) return { ok: true };
@@ -303,7 +358,7 @@ window.GSRooms = (function () {
         if (room.hostName === name) updates.hostName = remaining[0];
         return updateOnce(ref, updates).then(function () { return { ok: true }; });
       }),
-      { ok: false, error: NETWORK_ERROR }
+      "leaveRoom"
     );
   }
 
@@ -315,7 +370,7 @@ window.GSRooms = (function () {
     var database = firebaseDatabase();
     if (!database) return resolve(localStartRoom(key, startedAt));
 
-    return guard(
+    return guardOk(
       readRoom(database, key).then(function (room) {
         if (!room) return { ok: false, error: "Room not found." };
         if (room.status === "racing") return { ok: true, room: room };
@@ -338,7 +393,7 @@ window.GSRooms = (function () {
           return { ok: true, room: room };
         });
       }),
-      { ok: false, error: NETWORK_ERROR }
+      "startRoom"
     );
   }
 
@@ -352,7 +407,7 @@ window.GSRooms = (function () {
     var database = firebaseDatabase();
     if (!database) return resolve(localPatchProgress(key, name, patch));
 
-    return guard(
+    return guardOk(
       readRoom(database, key).then(function (room) {
         if (!room) return { ok: false, error: "Room not found." };
         var player = room.players[name];
@@ -378,7 +433,7 @@ window.GSRooms = (function () {
             return { ok: true, room: room, player: player };
           });
       }),
-      { ok: false, error: NETWORK_ERROR }
+      "patchProgress"
     );
   }
 
@@ -395,7 +450,8 @@ window.GSRooms = (function () {
       readRoom(database, key).then(function (room) {
         return isStale(room) ? null : room;
       }),
-      null
+      null,
+      "getRoom"
     );
   }
 
@@ -413,7 +469,8 @@ window.GSRooms = (function () {
           .filter(function (room) { return room && room.status === "waiting" && !isStale(room); })
           .sort(function (a, b) { return b.createdAt - a.createdAt; });
       }),
-      []
+      [],
+      "listRooms"
     );
   }
 
@@ -536,7 +593,7 @@ window.GSRooms = (function () {
     if (isStale(room)) return { ok: false, error: NOT_FOUND };
     if (room.status !== "waiting") return { ok: false, error: "That race has already started." };
 
-    if (!room.players[name]) room.players[name] = newPlayer(name, room.scrambleSeed);
+    if (!room.players[name]) setKey(room.players, name, newPlayer(name, room.scrambleSeed));
     rooms[key] = room;
     localSaveAll(rooms);
     return { ok: true, room: room };

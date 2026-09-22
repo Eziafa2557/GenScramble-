@@ -110,7 +110,9 @@ Rooms live in **Firebase Realtime Database** at `rooms/{CODE}`, so two phones wi
 same 4-letter code play the same race. The databaseURL is
 `https://genscramble-default-rtdb.europe-west1.firebasedatabase.app`.
 
-- **Create** claims a code with a transaction, so two hosts can never take the same one.
+- **Create** picks a code, checks nothing live is using it, then writes the room with a plain
+  `set`. Two hosts picking the same code in the same instant is the one race left, and whoever
+  writes second wins it.
 - **Waiting room** subscribes to `rooms/{CODE}` (`GSRooms.subscribe`). When a player joins
   the list updates with no interaction; when the host starts, every waiting phone follows
   into the race automatically.
@@ -122,6 +124,17 @@ same 4-letter code play the same race. The databaseURL is
 to the original `localStorage` implementation (`genscramble.rooms`) with the identical
 API, so Create, Join, Start and Solo all still work on one device. If two phones can't see
 each other's rooms, check the browser console: the fallback is silent by design.
+
+**If a room action fails**, the message tells you which of the three things went wrong, and
+the raw error is always logged to the console as
+`GenScramble rooms: createRoom failed <error>`:
+
+| Message | What to do |
+| --- | --- |
+| `Permission denied. Check the database rules.` | The RTDB rules are not `read/write: true` |
+| `Database not found. Check databaseURL in js/config.js.` | Wrong or missing `databaseURL` |
+| `Could not find a free room code. Try again.` | 60 codes in a row were taken — vanishingly rare |
+| `Network error. Check your connection.` | Nothing else matched: read the logged error |
 
 The room shape:
 
@@ -149,8 +162,10 @@ The room shape:
 ```
 
 Two things the database does that the code accounts for: a `null` field is **deleted**
-rather than stored, so `timeUsedMs: null` means "no result yet" by absence; and a node whose
-keys are all `0,1,2…` comes back as an **array**, so `players` is normalised on every read.
+rather than stored, so `timeUsedMs: null` means "no result yet" by absence — and on the way
+*in* those fields are stripped before the write (`withoutNulls`) rather than sent as nulls.
+And a node whose keys are all `0,1,2…` comes back as an **array**, so `players` is normalised
+on every read. A room is written with a plain `set` — no transaction.
 
 A player's name is also their key under `players`, and Realtime Database keys may not
 contain `. # $ / [ ]` — those are stripped from names as they are typed.
