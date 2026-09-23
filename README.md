@@ -29,6 +29,14 @@ A full-but-wrong word shakes red and **keeps your tiles** — nothing is wiped a
 auto-clears. To fix it, tap the slots you want to change (each letter drops back into the
 tray) and place them again.
 
+### Long words
+
+A 20-letter term cannot fit one phone line, so the answer row breaks into **balanced lines** —
+`EQUIVALENCEPRINCIPLE` lands as 7/7/6, never as a ragged wrap — and every slot on the row is
+sized from the longest of those lines. Short words keep the full 44px slot; `LLM` sits on one
+line as three ordinary slots. Slot **index order never changes**: index 0 is still the first
+letter of the word, wherever it wrapped to, so tapping any slot returns exactly that letter.
+
 ### Scoring
 
 - **Correct count** first.
@@ -145,7 +153,7 @@ The room shape:
   hostName: "Ava",
   durationMs: 180000,
   status: "waiting",              // waiting | racing | done
-  words: ["INVARIANT", ...],      // the same 20 for everyone
+  words: ["GENLAYER", ...],       // the same 20 for everyone
   scrambleSeed: 1234567890,       // one seed → per-player trays
   startedAt: null,
   players: {
@@ -197,15 +205,25 @@ server or a GenLayer contract means rewriting this one file and keeping those si
 
 ---
 
-## Adding words
+## The word bank
 
-Edit `js/words.js` and append an uppercase term to `window.GS_WORDS`.
-Words outside **5–12 letters** are filtered out automatically by `GS_wordsInRange()`,
-so a stray short word will never reach the board.
+`js/words.js` holds the 20 GenLayer terms, uppercase and unspaced. Every one is playable:
+`GS_WORDS_MIN` is **3** (`LLM`) and `GS_WORDS_MAX` is **20** (`EQUIVALENCEPRINCIPLE`), and
+`GS_wordsInRange()` uppercases each entry, **strips everything that is not a letter** and
+drops duplicates — so a multi-word term is stored as `INTELLIGENTCONTRACT`, a space can never
+reach the board, and no race can draw the same target twice.
+
+Because the bank is exactly 20 and a race takes 20, **every race uses the whole list** — the
+difference between two races is the order and each player's tray scramble.
+
+To add a term, append it to `window.GS_WORDS`:
 
 ```js
-window.GS_WORDS = ["INVARIANT", "ADJUDICATION", "YOURNEWWORD"];
+window.GS_WORDS = ["GENLAYER", "INTELLIGENTCONTRACT", "YOURNEWWORD"];
 ```
+
+A word longer than 20 letters (or shorter than 3) is filtered out and silently never appears.
+The longest term sets the widest answer row, so keep an eye on how it wraps.
 
 ---
 
@@ -214,7 +232,8 @@ window.GS_WORDS = ["INVARIANT", "ADJUDICATION", "YOURNEWWORD"];
 - **Anyone with the URL can read and write the database** — the rules are open. Fine for a
   game with nothing valuable in it; tighten them before you put anything real here.
 - A room code is the only access control. There are no accounts and no auth.
-- Words are drawn fresh per race from a bank of 48 GenLayer terms. No difficulty tiers yet.
+- Words are drawn fresh per race from a bank of 20 GenLayer terms, and a race takes all 20.
+  No difficulty tiers yet.
 - Landscape and desktop work, but the layout is tuned for a portrait phone.
 
 ## Next

@@ -143,6 +143,12 @@ window.GSGame = (function () {
     }
     if (out.join("") === before && out.length > 1) out = swapTwo(out);
 
+    /* Last word on the target, AFTER the loop above. Both loops reshuffle from
+       g.tray, so the second one can walk back onto the answer and nothing used
+       to check again — for a word with few arrangements that is a live leak
+       (LLM: about 1 shuffle in 80 left the tray spelling the answer). */
+    if (out.join("") === target) out = swapTwo(out);
+
     g.tray = out;
     return { type: "shuffle" };
   }

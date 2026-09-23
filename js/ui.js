@@ -64,6 +64,22 @@ window.GSUI = (function () {
 
   /* ---------- the board ---------- */
 
+  /* A 20-letter word cannot sit on one phone-width line, and letting the flex
+     row break wherever it runs out leaves a ragged 6/6/5/3. So the slots are
+     split into balanced full lines here (7/7/6, never 8/8/4), and the CSS sizes
+     every slot on the row to the longest of those lines. */
+  function answerLines(length, perLine) {
+    var max = perLine || 8;
+    if (length <= max) return [length];
+
+    var lines = Math.ceil(length / max);
+    var base = Math.floor(length / lines);
+    var extra = length % lines;
+    var out = [];
+    for (var i = 0; i < lines; i++) out.push(base + (i < extra ? 1 : 0));
+    return out;
+  }
+
   function renderBoard(game) {
     var target = GSGame.currentTarget(game);
     var nextWord = game.words[game.index + 1];
@@ -77,17 +93,29 @@ window.GSUI = (function () {
     var fill = $("progress-fill");
     if (fill) fill.style.width = Math.round((game.solved / game.words.length) * 100) + "%";
 
-    /* answer row */
+    /* answer row — one flex line per balanced group of slots */
     var row = $("answer-row");
     if (row) {
       clear(row);
-      game.answer.forEach(function (letter, i) {
-        var slot = el("button", "slot", letter === null ? "" : letter);
-        slot.type = "button";
-        slot.setAttribute("data-i", String(i));
-        if (letter !== null) slot.classList.add("is-filled");
-        slot.setAttribute("aria-label", letter === null ? "Empty slot " + (i + 1) : "Letter " + letter + ", tap to return it");
-        row.appendChild(slot);
+      var shape = answerLines(game.answer.length);
+      row.style.setProperty("--line-slots", String(Math.max.apply(null, shape)));
+      row.classList.toggle("is-long", shape.length > 1);
+
+      var at = 0;
+      shape.forEach(function (count) {
+        var line = el("div", "answer-line");
+        for (var n = 0; n < count; n++) {
+          var i = at + n;
+          var letter = game.answer[i];
+          var slot = el("button", "slot", letter === null ? "" : letter);
+          slot.type = "button";
+          slot.setAttribute("data-i", String(i));
+          if (letter !== null) slot.classList.add("is-filled");
+          slot.setAttribute("aria-label", letter === null ? "Empty slot " + (i + 1) : "Letter " + letter + ", tap to return it");
+          line.appendChild(slot);
+        }
+        at += count;
+        row.appendChild(line);
       });
     }
     setWordCardLocked(game.locked === true);

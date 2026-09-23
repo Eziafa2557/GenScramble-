@@ -190,15 +190,25 @@ body{
   transition:width .25s ease;
 }
 
-/* ---------- play: answer row ---------- */
+/* ---------- play: answer row ----------
+   Long words are split into balanced lines by ui.js (answerLines) and every
+   slot on the row is sized from --line-slots, the longest of those lines, so a
+   20-letter word lands as 7/7/6 rather than overflowing or breaking raggedly.
+   --board-w is the card's inner width: the 430px column minus the .app and
+   .card gutters (16px each side, twice). Short words keep the full 44px slot. */
 .answer-row{
-  display:flex;flex-wrap:wrap;gap:6px;justify-content:center;
+  --line-slots:8;
+  --slot-gap:6px;
+  --board-w:calc(min(430px,100vw) - 64px);
+  --slot-w:min(44px,calc((var(--board-w) - (var(--line-slots) - 1) * var(--slot-gap)) / var(--line-slots)));
+  display:flex;flex-direction:column;align-items:center;gap:var(--slot-gap);
   min-height:56px;padding:4px 0;
 }
+.answer-line{display:flex;gap:var(--slot-gap);justify-content:center}
 .slot{
   display:flex;align-items:center;justify-content:center;
-  min-width:44px;height:56px;padding:0 6px;
-  font:inherit;font-size:22px;font-weight:700;
+  width:var(--slot-w);min-width:0;height:56px;padding:0 2px;
+  font:inherit;font-size:min(22px,calc(var(--slot-w) * .58));font-weight:700;
   color:var(--tile-text);
   background:transparent;
   border:2px dashed rgba(255,255,255,.18);
@@ -206,6 +216,13 @@ body{
   cursor:pointer;
   touch-action:manipulation;
   transition:transform .08s ease,border-color .12s ease;
+}
+/* Narrow slots need a tighter corner and border or the letter has no room. */
+.answer-row.is-long .slot{border-radius:9px;border-width:1.5px}
+/* A 320px phone leaves only 256px inside the card. Tightening the gap is the
+   one lever left that does not shrink the letters further. */
+@media (max-width:380px){
+  .answer-row{--slot-gap:4px}
 }
 .slot.is-filled{
   background:var(--tile);
