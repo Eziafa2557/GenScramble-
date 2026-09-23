@@ -119,6 +119,9 @@ window.GSUI = (function () {
       });
     }
     setWordCardLocked(game.locked === true);
+    /* Skip is live only while the board accepts input: off during the correct-word
+       lock/flash, off once the race is finished, on otherwise. */
+    setSkipEnabled(game.status === "playing" && game.locked !== true);
 
     /* tray */
     var tray = $("tray");
@@ -166,6 +169,13 @@ window.GSUI = (function () {
   function setWordCardLocked(locked) {
     var card = document.querySelector(".word-card");
     if (card) card.classList.toggle("locked", !!locked);
+  }
+
+  /* Hidden with the play screen on results; disabled outright everywhere else it
+     could be reached, so a stray tap can never abandon a word mid-flash. */
+  function setSkipEnabled(on) {
+    var btn = $("btn-skip");
+    if (btn) btn.disabled = !on;
   }
 
   function flashAnswer() {
@@ -275,6 +285,7 @@ window.GSUI = (function () {
     setClock: setClock,
     renderBoard: renderBoard,
     setWordCardLocked: setWordCardLocked,
+    setSkipEnabled: setSkipEnabled,
     flashAnswer: flashAnswer,
     shakeAnswer: shakeAnswer,
     renderWaiting: renderWaiting,

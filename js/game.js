@@ -179,6 +179,26 @@ window.GSGame = (function () {
     return g;
   }
 
+  /* Give up on the current word and take the next one, tray and all. The slot is
+     spent: perWord goes to false (never true), so the word can never count as
+     solved and cannot be returned to. The last word ends the race the same way
+     running out of words does — incomplete, keeping whatever was solved.
+     Refuses while a correct word is locked, exactly like a tile tap.
+     The skipped word is deliberately NOT returned, so the answer never leaves
+     this file on the skip path. */
+  function skipWord(g) {
+    if (blocked(g)) return { type: "ignored" };
+
+    g.perWord[g.index] = false;
+    g.locked = false;
+    if (g.index + 1 >= g.words.length) {
+      finish(g, false);
+      return { type: "skip", finished: true };
+    }
+    startWord(g, g.index + 1);
+    return { type: "skip", finished: false };
+  }
+
   function finish(g, completedAll, at) {
     g.status = "finished";
     g.locked = true;
@@ -207,6 +227,7 @@ window.GSGame = (function () {
     start: start,
     startWord: startWord,
     nextWord: nextWord,
+    skipWord: skipWord,
     finish: finish,
     checkSolve: checkSolve,
     applyTapTray: applyTapTray,

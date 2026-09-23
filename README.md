@@ -13,7 +13,8 @@ Open `index.html` and it runs — from a phone, from a file, from any static hos
 1. **Solo run** — 20 words, 3:00. Beat your own time.
 2. **Create Room** — you get a 4-character code. Everyone who joins gets **the same 20 words**.
 3. **Join Room** — type the code and a name, then wait for the host to start.
-4. Race. Tap tiles. First to unscramble the most wins.
+4. Race. Tap tiles, shuffle when you're stuck, **Skip** a word you don't know. First to
+   unscramble the most wins.
 5. **Results** — your score, the ranked room, all 20 words revealed.
 
 ### The controls (nothing else)
@@ -23,6 +24,7 @@ Open `index.html` and it runs — from a phone, from a file, from any static hos
 | A tray tile | The letter flies to the first empty slot |
 | A filled slot | The letter goes straight back to the tray |
 | **Shuffle tray** | Reorders only the tray — the answer row is never disturbed |
+| **Skip** | Abandons this word and deals the next one |
 
 A correct word flashes green, locks for 200 ms and moves on.
 A full-but-wrong word shakes red and **keeps your tiles** — nothing is wiped and nothing
@@ -36,6 +38,24 @@ A 20-letter term cannot fit one phone line, so the answer row breaks into **bala
 sized from the longest of those lines. Short words keep the full 44px slot; `LLM` sits on one
 line as three ordinary slots. Slot **index order never changes**: index 0 is still the first
 letter of the word, wherever it wrapped to, so tapping any slot returns exactly that letter.
+
+### Skip
+
+**Skip** sits beside Shuffle tray and deals the next word immediately, with a fresh tray — the
+same move-on the board makes after a solve, minus the green flash. It is deliberately quieter
+than Shuffle: no accent colour, because it is not the thing you want to be tapping by reflex.
+
+- A skipped word is **abandoned, not solved**. It never adds to your score, and it still
+  spends that slot in the 20 — you cannot come back to it.
+- Skipping the **last** unfinished word ends the race right there, with whatever you solved.
+  That ending is a *non-finish*, exactly like the clock running out, so your time is recorded
+  as the full duration and it can never become a personal best.
+- Skip is **disabled during the correct-word flash** and on results, so a fast thumb can't
+  drop a word you just got right.
+- The answer is never revealed on skip — the word reappears only in the results reveal, like
+  every other word.
+- Works the same in Solo and in a room. A room still reports **solved** only; a skip is not
+  a solve and never reaches the database as one.
 
 ### Scoring
 
@@ -198,7 +218,11 @@ GSRooms.subscribe(code, onRoom)                // -> live updates; onRoom(null) 
 GSRooms.unsubscribe(code)
 GSRooms.ranked(room)                           // -> sorted [{ name, solved, timeUsedMs }]  (sync)
 GSRooms.playerSeed(room, name)                 // -> this player's tray seed              (sync)
+GSGame.skipWord(game)                          // -> { type: "skip", finished }  (rules only)
 ```
+
+`patchProgress` carries **solved** — never anything about skips. `skipWord` lives in `game.js`
+with the other rules and returns no word, so the answer cannot travel the skip path at all.
 
 Nothing else in the app reads room storage directly, so moving to Firestore, a socket
 server or a GenLayer contract means rewriting this one file and keeping those signatures.

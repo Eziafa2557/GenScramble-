@@ -22,7 +22,8 @@
     createDurationMs: 180000,
     raceOver: true,
     solveHandle: null,
-    raceStartedKey: null  /* "<code>:<startedAt>" — the Start button and the live room both land here */
+    raceStartedKey: null, /* "<code>:<startedAt>" — the Start button and the live room both land here */
+    endReason: ""         /* words | skipped | timer — only chooses the results title */
   };
 
   var DEFAULT_DURATION = 180000;
@@ -121,11 +122,13 @@
   }
 
   /* Fires once, whether the player finished all 20 or the clock ran out. */
-  function endRace(completedAll) {
+  function endRace(completedAll, reason) {
     if (S.raceOver) return;
     S.raceOver = true;
+    S.endReason = reason || (completedAll ? "words" : "timer");
     cancelSolveTimer();
     stopTimer();
+    GSUI.setSkipEnabled(false);   /* nothing left to skip */
 
     var g = S.game;
     if (g.status !== "finished") GSGame.finish(g, completedAll);
@@ -158,17 +161,32 @@
 
     if (!isRoom) {
       var best = bestSoloTime();
-      if (best !== null && res.timeUsedMs <= best) text += " New personal best.";
-      else if (best !== null) text += " Best: " + GSTimer.formatClock(best) + ".";
+      /* Only a run that unscrambled all 20 can BE a personal best — bestSoloTime
+         stores nothing else. A clock-out or a skip-to-the-end is timed at the full
+         duration, so without this gate a best recorded right at the wire would
+         hand "New personal best." to every run after it. */
+      if (best !== null && res.completedAll && res.timeUsedMs <= best) {
+        text += " New personal best.";
+      } else if (best !== null) {
+        text += " Best: " + GSTimer.formatClock(best) + ".";
+      }
     }
     return text;
+  }
+
+  /* Three ways to stop, and the copy has to name the right one: the clock ran
+     out, every word was solved, or the player skipped their way to the end. */
+  function resultTitle(res) {
+    if (res.completedAll) return "You unscrambled all " + res.total;
+    if (S.endReason === "skipped") return "Out of words. Score locked.";
+    return "Timer ended. Score locked.";
   }
 
   function renderResults(res) {
     var isRoom = S.mode === "room" && !!S.roomCode;
 
     var view = {
-      title: res.completedAll ? "You unscrambled all " + res.total : "Timer ended. Score locked.",
+      title: resultTitle(res),
       subtitle: resultSubtitle(res, isRoom),
       solved: res.solved,
       total: res.total,
@@ -274,6 +292,21 @@
   function onShuffle() {
     if (!S.game || S.raceOver) return;
     GSGame.shuffleTray(S.game);
+    GSUI.renderBoard(S.game);
+  }
+
+  /* Abandon this word and take the next one. No flash, no toast, no answer — the
+     board simply moves on. The rules live in GSGame.skipWord; this only wires it. */
+  function onSkip() {
+    if (!S.game || S.raceOver) return;
+
+    var res = GSGame.skipWord(S.game);
+    if (!res || res.type === "ignored") return;   /* mid-flash, or already finished */
+
+    if (S.game.status === "finished") {           /* that was the last unfinished word */
+      endRace(false, "skipped");
+      return;
+    }
     GSUI.renderBoard(S.game);
   }
 
@@ -447,6 +480,7 @@
     });
 
     $("btn-shuffle").addEventListener("click", onShuffle);
+    $("btn-skip").addEventListener("click", onSkip);
     $("tray").addEventListener("click", onTrayTap);
     $("answer-row").addEventListener("click", onAnswerTap);
 

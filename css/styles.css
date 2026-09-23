@@ -107,6 +107,14 @@ body{
   color:var(--yellow);font-size:12px;letter-spacing:.04em;
 }
 .btn-danger{background:transparent;border-color:rgba(255,92,92,.45);color:var(--red)}
+/* Skip sits beside Shuffle but must not read as a second CTA — same compact
+   geometry, muted ink, no accent. Shuffle keeps the yellow. */
+.btn-skip{
+  width:auto;min-height:44px;padding:0 12px;
+  background:transparent;border:1px solid var(--line);
+  color:var(--muted);font-size:12px;letter-spacing:.04em;
+}
+.btn-skip:not(:disabled):active{color:var(--text);border-color:var(--line-strong)}
 .ghost-btn{
   min-height:44px;padding:0 10px;
   font:inherit;font-size:13px;font-weight:600;
@@ -232,7 +240,8 @@ body{
 .slot:active{transform:translateY(1px)}
 
 /* ---------- play: tray ---------- */
-.tray-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.tray-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.tray-actions{display:flex;align-items:center;gap:8px}
 .tray{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;min-height:56px}
 .tile{
   display:flex;align-items:center;justify-content:center;
