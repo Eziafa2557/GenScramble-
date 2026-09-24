@@ -8,8 +8,10 @@
      null        never played yet
      "solved"    unscrambled
      "skipped"   abandoned — but STILL OPEN. A skipped word is not deleted and
-                 never counts as solved; Back returns to the oldest one, and the
-                 order of work is current -> later unplayed -> leftover skipped. */
+                 never counts as solved. The skipped words form a stack in the
+                 order they were skipped, and Back walks it one stage at a time,
+                 most recent first; the traversal section below explains why that
+                 stack is read off perWord instead of being kept alongside it. */
 
 window.GSGame = (function () {
 
@@ -183,46 +185,76 @@ window.GSGame = (function () {
     return out;
   }
 
-  /* ---------- advancing ---------- */
+  /* ---------- the skipped stack ----------
 
-  /* The oldest word that was skipped and never solved — the one Back goes to. */
-  function oldestSkipped(g) {
-    for (var i = 0; i < g.words.length; i++) if (g.perWord[i] === SKIPPED) return i;
+     Skipped words form a STACK in the order they were skipped — the oldest skip
+     at the bottom, the one you just passed on at the top. Back walks DOWN it, one
+     stage per tap, and never jumps to the start of the race: skipping words 3, 4
+     and 5 and then pressing Back gives 5, then 4, then 3. Word 1 turns up on Back
+     only once it really is the previous stage.
+
+     The stack does not need to be stored. The board only ever reaches a NEW word
+     by scanning forward, so a word can only be skipped when the board arrives at
+     it for the first time — every word below it already resolved. Words therefore
+     enter the stack in index order, which makes "one stage down the stack" simply
+     "the nearest skipped word below the one on screen". That is why prevSkipped /
+     nextSkipped can be scans instead of a cursor, and why there is no second copy
+     of the skipped set to drift out of step with perWord. Suite 4 pins both halves
+     of that reasoning: the ordering property is asserted as an invariant, and the
+     walk is checked against the literal 3-4-5 sequence above.
+
+       Back   one stage DOWN — the previous skip. Refused at the bottom.
+       Skip   forward to the next unplayed word; when there is none left, one
+              stage through the stack, down first and then up. */
+
+  /* The nearest skipped-unsolved word below `i` — the previous stage of the
+     stack. -1 when the board is already at the bottom. */
+  function prevSkipped(g, i) {
+    for (var j = i - 1; j >= 0; j--) if (g.perWord[j] === SKIPPED) return j;
     return -1;
   }
 
-  /* The next word to put on the board, searching out from `from`:
-       1. the first unplayed word AFTER it  — finish the new words first,
-       2. otherwise the OLDEST skipped word that is not the one being left,
-       3. otherwise -1: nothing is left to play.
-     Scanning only forward in step 1 is enough, because a word is only ever left
-     behind once it is resolved, so the first unplayed word is always at or ahead
-     of the word on screen. In particular, backing up to the oldest skipped word
-     and skipping it again cannot strand an unplayed word behind you. */
-  function nextOpenIndex(g, from) {
+  /* The nearest skipped-unsolved word above `i` — one stage the other way. */
+  function nextSkipped(g, i) {
+    for (var j = i + 1; j < g.words.length; j++) if (g.perWord[j] === SKIPPED) return j;
+    return -1;
+  }
+
+  /* The first word after `from` that has never been played. Scanning only
+     forward is enough, because a word is only ever left behind once it is
+     resolved, so the first unplayed word is always at or ahead of the word on
+     screen — invariant `perWord[i] === null implies i >= index`. Stepping back
+     through the stack and moving on again therefore cannot strand an unplayed
+     word behind you. */
+  function firstUnplayed(g, from) {
     for (var i = from + 1; i < g.words.length; i++) {
       if (g.perWord[i] === null) return i;
     }
-    for (var j = 0; j < g.words.length; j++) {
-      if (g.perWord[j] === SKIPPED && j !== from) return j;
-    }
     return -1;
   }
 
-  /* Back is only worth offering when there is a skipped word to go back TO — one
-     other than the word already on the board. */
+  /* The next word to play once nothing is unplayed: down the stack, then up it,
+     then -1 — nothing skipped anywhere, so nothing is left at all. The "up" leg
+     is what keeps a solved word from ending the race while skipped ones sit above
+     the board, which is how words 2 and 3 in the 4-3-2 walk still get their turn. */
+  function openFrom(g, i) {
+    var back = prevSkipped(g, i);
+    return back !== -1 ? back : nextSkipped(g, i);
+  }
+
+  /* Back is only worth offering when there is a stage below this one. */
   function canGoBack(g) {
-    if (!g) return false;
-    var at = oldestSkipped(g);
-    return at !== -1 && at !== g.index;
+    return !!g && prevSkipped(g, g.index) !== -1;
   }
 
   function nextWord(g) {
     g.locked = false;
-    var next = nextOpenIndex(g, g.index);
-    /* Nothing left anywhere means every word was solved — this is the only way
-       the game reaches "completedAll". Skipped words are open, so a race with
-       any skipped word still outstanding cannot land here. */
+    var ahead = firstUnplayed(g, g.index);
+    if (ahead !== -1) { startWord(g, ahead); return g; }
+    /* Nothing unplayed ahead: work back through what is still skipped. -1 here
+       means no word is skipped anywhere either, so every word was solved — the
+       only way the game reaches "completedAll". */
+    var next = openFrom(g, g.index);
     if (next === -1) return finish(g, true);
     startWord(g, next);
     return g;
@@ -230,10 +262,8 @@ window.GSGame = (function () {
 
   /* Give up on the current word and take the next open one, tray and all. The
      word is marked skipped — it does NOT count as solved, and it stays in the
-     race so Back can return to it. The race only ends here when the skip leaves
-     nothing else open at all, which means every other word was solved; then it
-     ends incomplete, keeping whatever was solved.
-     Refuses while a correct word is locked, exactly like a tile tap.
+     race so Back can return to it. Refuses while a correct word is locked,
+     exactly like a tile tap.
      The skipped word is deliberately NOT returned, so the answer never leaves
      this file on the skip path. */
   function skipWord(g) {
@@ -243,7 +273,20 @@ window.GSGame = (function () {
     g.perWord[from] = SKIPPED;
     g.locked = false;
 
-    var next = nextOpenIndex(g, from);
+    /* Forward through the words you have not seen yet: that is the order of work
+       — the word on screen, then later unplayed words, then leftover skipped. */
+    var ahead = firstUnplayed(g, from);
+    if (ahead !== -1) {
+      startWord(g, ahead);
+      return { type: "skip", finished: false, index: ahead };
+    }
+
+    /* Nothing unplayed left. Move one stage through the stack — down towards the
+       oldest skip, or up towards the most recent one when the board is already at
+       the bottom. Either way it is ONE stage, and the race only ends when there
+       is no stage left at all, so a skip can never throw away a word that is
+       still open: at worst it ends with this word as the only one left unsolved. */
+    var next = openFrom(g, from);
     if (next === -1) {
       finish(g, false);
       return { type: "skip", finished: true };
@@ -252,14 +295,13 @@ window.GSGame = (function () {
     return { type: "skip", finished: false, index: next };
   }
 
-  /* Jump to the oldest skipped word that is still open. The tray is rebuilt from
-     the same seed, so a word looks exactly as it did the first time. */
+  /* Back one stage: the skipped word you just left, not the first skip of the
+     race. The tray is rebuilt from the same seed, so the word looks exactly as
+     it did the first time. */
   function backToSkipped(g) {
     if (blocked(g)) return { type: "ignored" };
-    if (!canGoBack(g)) return { type: "ignored" };
-
-    var at = oldestSkipped(g);
-    g.locked = false;
+    var at = prevSkipped(g, g.index);
+    if (at === -1) return { type: "ignored" };
     startWord(g, at);
     return { type: "back", index: at };
   }

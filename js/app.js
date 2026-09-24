@@ -298,8 +298,9 @@
 
   /* Abandon this word and take the next open one. No flash, no toast, no answer —
      the board simply moves on. The rules live in GSGame.skipWord; this only wires
-     it. A skipped word stays in the race, so this ends the race only when the skip
-     left nothing else open (every other word solved). */
+     it. A skipped word stays in the race, so a skip ends the race only when it
+     leaves nothing else open — either every other word was solved, or this was
+     the only skipped word and there are no unplayed words left. */
   function onSkip() {
     if (!S.game || S.raceOver) return;
 
@@ -313,8 +314,9 @@
     GSUI.renderBoard(S.game);
   }
 
-  /* Go back to the oldest word that was skipped and never solved. Same guard as
-     Skip: refused mid-flash, and a no-op when there is nothing to go back to. */
+  /* Go back one stage through the skipped words — the one you just left, not the
+     first skip of the race. Same guard as Skip: refused mid-flash, and a no-op at
+     the bottom of the stack. */
   function onBack() {
     if (!S.game || S.raceOver) return;
 

@@ -25,7 +25,7 @@ Open `index.html` and it runs — from a phone, from a file, from any static hos
 | A filled slot | The letter goes straight back to the tray |
 | **Shuffle tray** | Reorders only the tray — the answer row is never disturbed |
 | **Skip** | Abandons this word — it stays in the race — and deals the next open one |
-| **Back to skipped** | Returns to the oldest word you skipped and never solved |
+| **Back to skipped** | Steps back one stage through the words you skipped, most recent first |
 
 A correct word flashes green, locks for 200 ms and moves on.
 A full-but-wrong word shakes red and **keeps your tiles** — nothing is wiped and nothing
@@ -44,25 +44,29 @@ letter of the word, wherever it wrapped to, so tapping any slot returns exactly 
 
 **Skip** sits with Shuffle tray and deals the next open word immediately, with a fresh tray —
 the same move-on the board makes after a solve, minus the green flash. **Back to skipped**
-returns to the oldest word you skipped and never solved. Both are deliberately quieter than
-Shuffle: no accent colour, because they are not the things you want to be tapping by reflex.
+walks back through the words you passed on, one stage per tap. Both are deliberately quieter
+than Shuffle: no accent colour, because they are not the things you want to be tapping by
+reflex.
 
 - **A skipped word is abandoned, not solved.** It never adds to your score, and it is never
   deleted from the race.
-- **Skipped words stay open.** Back to skipped is enabled only while at least one skipped word
-  is still unsolved, and it always jumps to the **oldest** one. The tray there is rebuilt from
-  the same seed, so the word looks exactly as it did the first time.
-- **Order of work: the word on screen → later unplayed words → leftover skipped words.** A skip
-  walks you forward through the words you have not seen yet; only once there are none left does
-  it fall back to the oldest skipped word. Re-skipping a word you went back to leaves it skipped
-  and moves on by the same rule — so with unplayed words still ahead, a skip goes to the next
-  new word, not to the other skipped one. Back is how you reach those.
+- **Skipped words form a stack, and Back walks it most recent skip first.** Skip words 3, 4
+  and 5, and Back gives you **5, then 4, then 3** — never word 1 just because word 1 was
+  skipped earlier. Word 1 comes up only once it really is the previous stage. One tap is one
+  stage in both directions, so nothing ever throws you back to the start of the race.
+- **Back is on only while a skipped word is still open below the one on screen.** At the
+  bottom of the stack it is off, and tapping it does nothing. The tray there is rebuilt from
+  the same seed, so a word looks exactly as it did the first time.
+- **Order of work: the word on screen → later unplayed words → the skipped ones.** A skip
+  walks you forward through the words you have not seen yet; only once there are none left
+  does it step through the stack. **Skip from a word you went back to moves forward again**,
+  to the next word you have not finished.
 - **You can always finish all 20.** Every word stays reachable, forwards and back, until the
   clock runs out.
-- **The race ends** when every word has been solved, or when the clock runs out, or when a skip
-  leaves nothing else open at all — which means you solved nineteen and skipped the last. That
-  last ending is a *non-finish*, exactly like the clock running out, so the time recorded is the
-  full duration and it can never become a personal best.
+- **The race ends** when every word has been solved, or when the clock runs out, or when a
+  skip leaves nothing else open at all — which means the word you just skipped was the only
+  one still unsolved. That last ending is a *non-finish*, exactly like the clock running out,
+  so the time recorded is the full duration and it can never become a personal best.
 - The word list under the board marks every word: **✓** solved, **↺** skipped and still open.
 - Skip and Back are **disabled during the correct-word flash** and on results, so a fast thumb
   can't drop a word you just got right.
@@ -234,7 +238,7 @@ GSRooms.ranked(room)                           // -> sorted [{ name, solved, tim
 GSRooms.playerSeed(room, name)                 // -> this player's tray seed              (sync)
 GSGame.skipWord(game)                          // -> { type: "skip", finished }  (rules only)
 GSGame.backToSkipped(game)                     // -> { type: "back", index } | { type: "ignored" }
-GSGame.canGoBack(game)                         // -> true while a skipped word is still open
+GSGame.canGoBack(game)                         // -> true while a skipped word is open below the board
 GSGame.wordState(game, i)                      // -> null | "solved" | "skipped"        (sync)
 ```
 
