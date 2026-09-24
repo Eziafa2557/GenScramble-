@@ -109,12 +109,14 @@ body{
 .btn-danger{background:transparent;border-color:rgba(255,92,92,.45);color:var(--red)}
 /* Skip sits beside Shuffle but must not read as a second CTA — same compact
    geometry, muted ink, no accent. Shuffle keeps the yellow. */
-.btn-skip{
+/* The quiet secondary controls: Skip and Back. Deliberately NOT accent-coloured —
+   they are not the thing you want to be tapping by reflex. */
+.btn-quiet{
   width:auto;min-height:44px;padding:0 12px;
   background:transparent;border:1px solid var(--line);
   color:var(--muted);font-size:12px;letter-spacing:.04em;
 }
-.btn-skip:not(:disabled):active{color:var(--text);border-color:var(--line-strong)}
+.btn-quiet:not(:disabled):active{color:var(--text);border-color:var(--line-strong)}
 .ghost-btn{
   min-height:44px;padding:0 10px;
   font:inherit;font-size:13px;font-weight:600;
@@ -241,7 +243,7 @@ body{
 
 /* ---------- play: tray ---------- */
 .tray-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap}
-.tray-actions{display:flex;align-items:center;gap:8px}
+.tray-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .tray{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;min-height:56px}
 .tile{
   display:flex;align-items:center;justify-content:center;
@@ -276,6 +278,9 @@ body{
 }
 .word-chip.is-current{color:var(--yellow);border-color:rgba(245,224,74,.4)}
 .word-chip.is-done{color:var(--green);border-color:rgba(124,227,139,.35)}
+/* A skipped word is still open, so it reads as pending — not as done. */
+.word-chip.is-skipped{color:var(--muted);border-color:var(--line-strong)}
+.word-chip.is-skipped.is-current{color:var(--yellow);border-color:rgba(245,224,74,.4)}
 
 /* ---------- results ---------- */
 .stats{display:flex;gap:10px;width:100%;margin-top:6px}

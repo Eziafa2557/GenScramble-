@@ -13,8 +13,8 @@ Open `index.html` and it runs — from a phone, from a file, from any static hos
 1. **Solo run** — 20 words, 3:00. Beat your own time.
 2. **Create Room** — you get a 4-character code. Everyone who joins gets **the same 20 words**.
 3. **Join Room** — type the code and a name, then wait for the host to start.
-4. Race. Tap tiles, shuffle when you're stuck, **Skip** a word you don't know. First to
-   unscramble the most wins.
+4. Race. Tap tiles, shuffle when you're stuck, **Skip** a word you don't know, and
+   **Back to skipped** to return to the ones you passed on. First to unscramble the most wins.
 5. **Results** — your score, the ranked room, all 20 words revealed.
 
 ### The controls (nothing else)
@@ -24,7 +24,8 @@ Open `index.html` and it runs — from a phone, from a file, from any static hos
 | A tray tile | The letter flies to the first empty slot |
 | A filled slot | The letter goes straight back to the tray |
 | **Shuffle tray** | Reorders only the tray — the answer row is never disturbed |
-| **Skip** | Abandons this word and deals the next one |
+| **Skip** | Abandons this word — it stays in the race — and deals the next open one |
+| **Back to skipped** | Returns to the oldest word you skipped and never solved |
 
 A correct word flashes green, locks for 200 ms and moves on.
 A full-but-wrong word shakes red and **keeps your tiles** — nothing is wiped and nothing
@@ -39,29 +40,42 @@ sized from the longest of those lines. Short words keep the full 44px slot; `LLM
 line as three ordinary slots. Slot **index order never changes**: index 0 is still the first
 letter of the word, wherever it wrapped to, so tapping any slot returns exactly that letter.
 
-### Skip
+### Skip, and going back to skipped
 
-**Skip** sits beside Shuffle tray and deals the next word immediately, with a fresh tray — the
-same move-on the board makes after a solve, minus the green flash. It is deliberately quieter
-than Shuffle: no accent colour, because it is not the thing you want to be tapping by reflex.
+**Skip** sits with Shuffle tray and deals the next open word immediately, with a fresh tray —
+the same move-on the board makes after a solve, minus the green flash. **Back to skipped**
+returns to the oldest word you skipped and never solved. Both are deliberately quieter than
+Shuffle: no accent colour, because they are not the things you want to be tapping by reflex.
 
-- A skipped word is **abandoned, not solved**. It never adds to your score, and it still
-  spends that slot in the 20 — you cannot come back to it.
-- Skipping the **last** unfinished word ends the race right there, with whatever you solved.
-  That ending is a *non-finish*, exactly like the clock running out, so your time is recorded
-  as the full duration and it can never become a personal best.
-- Skip is **disabled during the correct-word flash** and on results, so a fast thumb can't
-  drop a word you just got right.
-- The answer is never revealed on skip — the word reappears only in the results reveal, like
-  every other word.
-- Works the same in Solo and in a room. A room still reports **solved** only; a skip is not
-  a solve and never reaches the database as one.
+- **A skipped word is abandoned, not solved.** It never adds to your score, and it is never
+  deleted from the race.
+- **Skipped words stay open.** Back to skipped is enabled only while at least one skipped word
+  is still unsolved, and it always jumps to the **oldest** one. The tray there is rebuilt from
+  the same seed, so the word looks exactly as it did the first time.
+- **Order of work: the word on screen → later unplayed words → leftover skipped words.** A skip
+  walks you forward through the words you have not seen yet; only once there are none left does
+  it fall back to the oldest skipped word. Re-skipping a word you went back to leaves it skipped
+  and moves on by the same rule — so with unplayed words still ahead, a skip goes to the next
+  new word, not to the other skipped one. Back is how you reach those.
+- **You can always finish all 20.** Every word stays reachable, forwards and back, until the
+  clock runs out.
+- **The race ends** when every word has been solved, or when the clock runs out, or when a skip
+  leaves nothing else open at all — which means you solved nineteen and skipped the last. That
+  last ending is a *non-finish*, exactly like the clock running out, so the time recorded is the
+  full duration and it can never become a personal best.
+- The word list under the board marks every word: **✓** solved, **↺** skipped and still open.
+- Skip and Back are **disabled during the correct-word flash** and on results, so a fast thumb
+  can't drop a word you just got right.
+- Neither one reveals the answer — the word reappears only in the results reveal.
+- Works the same in Solo and in a room. A room still reports **solved** only: a skip is not a
+  solve and never reaches the database as one.
 
 ### Scoring
 
 - **Correct count** first.
 - **Time used** breaks ties (lower is better). If the clock runs out, time used is the full duration.
-- Finishing all 20 freezes the clock at the moment you finish.
+- Finishing all 20 freezes the clock at the moment you finish. Skipping the last one instead is a
+  non-finish, so it is timed at the full duration.
 
 ---
 
@@ -219,10 +233,14 @@ GSRooms.unsubscribe(code)
 GSRooms.ranked(room)                           // -> sorted [{ name, solved, timeUsedMs }]  (sync)
 GSRooms.playerSeed(room, name)                 // -> this player's tray seed              (sync)
 GSGame.skipWord(game)                          // -> { type: "skip", finished }  (rules only)
+GSGame.backToSkipped(game)                     // -> { type: "back", index } | { type: "ignored" }
+GSGame.canGoBack(game)                         // -> true while a skipped word is still open
+GSGame.wordState(game, i)                      // -> null | "solved" | "skipped"        (sync)
 ```
 
-`patchProgress` carries **solved** — never anything about skips. `skipWord` lives in `game.js`
-with the other rules and returns no word, so the answer cannot travel the skip path at all.
+`patchProgress` carries **solved** — never anything about skips. `skipWord`, `backToSkipped` and
+`canGoBack` live in `game.js` with the other rules, and neither move returns a word, so the
+answer cannot travel either path at all.
 
 Nothing else in the app reads room storage directly, so moving to Firestore, a socket
 server or a GenLayer contract means rewriting this one file and keeping those signatures.

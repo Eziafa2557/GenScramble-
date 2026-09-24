@@ -2,9 +2,20 @@
    Tap a tray tile to send it to the first empty slot.
    Tap a filled slot to send the letter straight back to the tray.
    Fixing a wrong word is therefore return-a-letter, then place another one.
-   There is no typing, no submit button and no keyboard anywhere in here. */
+   There is no typing, no submit button and no keyboard anywhere in here.
+
+   Every word is in one of three states, held in perWord:
+     null        never played yet
+     "solved"    unscrambled
+     "skipped"   abandoned — but STILL OPEN. A skipped word is not deleted and
+                 never counts as solved; Back returns to the oldest one, and the
+                 order of work is current -> later unplayed -> leftover skipped. */
 
 window.GSGame = (function () {
+
+  /* The two ways a word can be finished with. A skipped word is still open. */
+  var SOLVED = "solved";
+  var SKIPPED = "skipped";
 
   function createGame(config) {
     var cfg = config || {};
@@ -23,8 +34,12 @@ window.GSGame = (function () {
       finishedAt: null,
       timeUsedMs: null,
       completedAll: false,
-      perWord: words.map(function () { return null; }) /* true | false | null */
+      perWord: words.map(function () { return null; }) /* null | "solved" | "skipped" */
     };
+  }
+
+  function wordState(g, i) {
+    return g.perWord[i] === undefined ? null : g.perWord[i];
   }
 
   function currentTarget(g) {
@@ -84,7 +99,7 @@ window.GSGame = (function () {
     if (result === "solved") {
       g.locked = true;
       g.solved += 1;
-      g.perWord[g.index] = true;
+      g.perWord[g.index] = SOLVED;
     }
     return { type: type, result: result, word: currentWord(g), target: currentTarget(g) };
   }
@@ -170,40 +185,91 @@ window.GSGame = (function () {
 
   /* ---------- advancing ---------- */
 
+  /* The oldest word that was skipped and never solved — the one Back goes to. */
+  function oldestSkipped(g) {
+    for (var i = 0; i < g.words.length; i++) if (g.perWord[i] === SKIPPED) return i;
+    return -1;
+  }
+
+  /* The next word to put on the board, searching out from `from`:
+       1. the first unplayed word AFTER it  — finish the new words first,
+       2. otherwise the OLDEST skipped word that is not the one being left,
+       3. otherwise -1: nothing is left to play.
+     Scanning only forward in step 1 is enough, because a word is only ever left
+     behind once it is resolved, so the first unplayed word is always at or ahead
+     of the word on screen. In particular, backing up to the oldest skipped word
+     and skipping it again cannot strand an unplayed word behind you. */
+  function nextOpenIndex(g, from) {
+    for (var i = from + 1; i < g.words.length; i++) {
+      if (g.perWord[i] === null) return i;
+    }
+    for (var j = 0; j < g.words.length; j++) {
+      if (g.perWord[j] === SKIPPED && j !== from) return j;
+    }
+    return -1;
+  }
+
+  /* Back is only worth offering when there is a skipped word to go back TO — one
+     other than the word already on the board. */
+  function canGoBack(g) {
+    if (!g) return false;
+    var at = oldestSkipped(g);
+    return at !== -1 && at !== g.index;
+  }
+
   function nextWord(g) {
     g.locked = false;
-    if (g.index + 1 >= g.words.length) {
-      return finish(g, true);
-    }
-    startWord(g, g.index + 1);
+    var next = nextOpenIndex(g, g.index);
+    /* Nothing left anywhere means every word was solved — this is the only way
+       the game reaches "completedAll". Skipped words are open, so a race with
+       any skipped word still outstanding cannot land here. */
+    if (next === -1) return finish(g, true);
+    startWord(g, next);
     return g;
   }
 
-  /* Give up on the current word and take the next one, tray and all. The slot is
-     spent: perWord goes to false (never true), so the word can never count as
-     solved and cannot be returned to. The last word ends the race the same way
-     running out of words does — incomplete, keeping whatever was solved.
+  /* Give up on the current word and take the next open one, tray and all. The
+     word is marked skipped — it does NOT count as solved, and it stays in the
+     race so Back can return to it. The race only ends here when the skip leaves
+     nothing else open at all, which means every other word was solved; then it
+     ends incomplete, keeping whatever was solved.
      Refuses while a correct word is locked, exactly like a tile tap.
      The skipped word is deliberately NOT returned, so the answer never leaves
      this file on the skip path. */
   function skipWord(g) {
     if (blocked(g)) return { type: "ignored" };
 
-    g.perWord[g.index] = false;
+    var from = g.index;
+    g.perWord[from] = SKIPPED;
     g.locked = false;
-    if (g.index + 1 >= g.words.length) {
+
+    var next = nextOpenIndex(g, from);
+    if (next === -1) {
       finish(g, false);
       return { type: "skip", finished: true };
     }
-    startWord(g, g.index + 1);
-    return { type: "skip", finished: false };
+    startWord(g, next);
+    return { type: "skip", finished: false, index: next };
+  }
+
+  /* Jump to the oldest skipped word that is still open. The tray is rebuilt from
+     the same seed, so a word looks exactly as it did the first time. */
+  function backToSkipped(g) {
+    if (blocked(g)) return { type: "ignored" };
+    if (!canGoBack(g)) return { type: "ignored" };
+
+    var at = oldestSkipped(g);
+    g.locked = false;
+    startWord(g, at);
+    return { type: "back", index: at };
   }
 
   function finish(g, completedAll, at) {
     g.status = "finished";
     g.locked = true;
     g.completedAll = !!completedAll;
-    for (var i = 0; i < g.perWord.length; i++) if (g.perWord[i] === null) g.perWord[i] = false;
+    /* Untouched words stay null: they read as "not solved" everywhere, and they
+       must not be mistaken for skipped words (Back is refused once finished). */
     g.finishedAt = typeof at === "number" ? at : Date.now();
     var used = g.finishedAt - g.startedAt;
     g.timeUsedMs = completedAll ? used : g.durationMs;
@@ -217,7 +283,7 @@ window.GSGame = (function () {
       timeUsedMs: g.timeUsedMs === null ? g.durationMs : g.timeUsedMs,
       completedAll: g.completedAll,
       words: g.words.map(function (w, i) {
-        return { word: w, solved: g.perWord[i] === true };
+        return { word: w, solved: g.perWord[i] === SOLVED };
       })
     };
   }
@@ -228,6 +294,9 @@ window.GSGame = (function () {
     startWord: startWord,
     nextWord: nextWord,
     skipWord: skipWord,
+    backToSkipped: backToSkipped,
+    canGoBack: canGoBack,
+    wordState: wordState,
     finish: finish,
     checkSolve: checkSolve,
     applyTapTray: applyTapTray,

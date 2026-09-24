@@ -128,7 +128,8 @@
     S.endReason = reason || (completedAll ? "words" : "timer");
     cancelSolveTimer();
     stopTimer();
-    GSUI.setSkipEnabled(false);   /* nothing left to skip */
+    GSUI.setSkipEnabled(false);   /* nothing left to skip or to go back to */
+    GSUI.setBackEnabled(false);
 
     var g = S.game;
     if (g.status !== "finished") GSGame.finish(g, completedAll);
@@ -295,18 +296,31 @@
     GSUI.renderBoard(S.game);
   }
 
-  /* Abandon this word and take the next one. No flash, no toast, no answer — the
-     board simply moves on. The rules live in GSGame.skipWord; this only wires it. */
+  /* Abandon this word and take the next open one. No flash, no toast, no answer —
+     the board simply moves on. The rules live in GSGame.skipWord; this only wires
+     it. A skipped word stays in the race, so this ends the race only when the skip
+     left nothing else open (every other word solved). */
   function onSkip() {
     if (!S.game || S.raceOver) return;
 
     var res = GSGame.skipWord(S.game);
     if (!res || res.type === "ignored") return;   /* mid-flash, or already finished */
 
-    if (S.game.status === "finished") {           /* that was the last unfinished word */
+    if (S.game.status === "finished") {           /* nothing left to play */
       endRace(false, "skipped");
       return;
     }
+    GSUI.renderBoard(S.game);
+  }
+
+  /* Go back to the oldest word that was skipped and never solved. Same guard as
+     Skip: refused mid-flash, and a no-op when there is nothing to go back to. */
+  function onBack() {
+    if (!S.game || S.raceOver) return;
+
+    var res = GSGame.backToSkipped(S.game);
+    if (!res || res.type === "ignored") return;
+
     GSUI.renderBoard(S.game);
   }
 
@@ -481,6 +495,7 @@
 
     $("btn-shuffle").addEventListener("click", onShuffle);
     $("btn-skip").addEventListener("click", onSkip);
+    $("btn-back").addEventListener("click", onBack);
     $("tray").addEventListener("click", onTrayTap);
     $("answer-row").addEventListener("click", onAnswerTap);
 

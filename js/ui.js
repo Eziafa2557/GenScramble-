@@ -119,9 +119,12 @@ window.GSUI = (function () {
       });
     }
     setWordCardLocked(game.locked === true);
-    /* Skip is live only while the board accepts input: off during the correct-word
-       lock/flash, off once the race is finished, on otherwise. */
-    setSkipEnabled(game.status === "playing" && game.locked !== true);
+    /* Skip and Back are live only while the board accepts input: off during the
+       correct-word lock/flash, off once the race is finished. Back is additionally
+       off when there is no skipped word to go back to. */
+    var live = game.status === "playing" && game.locked !== true;
+    setSkipEnabled(live);
+    setBackEnabled(live && GSGame.canGoBack(game));
 
     /* tray */
     var tray = $("tray");
@@ -148,19 +151,23 @@ window.GSUI = (function () {
         : "LAST WORD";
     }
 
-    /* compact words list — index + length + tick. Never the answer. */
+    /* compact words list — index + length + state. Never the answer. A skipped
+       word gets its own mark because it is still open: it can come back. */
     var list = $("words-list");
     if (list) {
       clear(list);
       game.words.forEach(function (word, i) {
         var chip = el("div", "word-chip");
         chip.appendChild(el("span", null, String(i + 1) + "·" + word.length));
-        if (game.perWord[i] === true) {
+        var state = GSGame.wordState(game, i);
+        if (state === "solved") {
           chip.classList.add("is-done");
           chip.appendChild(el("span", null, "✓"));
-        } else if (i === game.index) {
-          chip.classList.add("is-current");
+        } else if (state === "skipped") {
+          chip.classList.add("is-skipped");
+          chip.appendChild(el("span", null, "↺"));
         }
+        if (i === game.index && game.status === "playing") chip.classList.add("is-current");
         list.appendChild(chip);
       });
     }
@@ -175,6 +182,11 @@ window.GSUI = (function () {
      could be reached, so a stray tap can never abandon a word mid-flash. */
   function setSkipEnabled(on) {
     var btn = $("btn-skip");
+    if (btn) btn.disabled = !on;
+  }
+
+  function setBackEnabled(on) {
+    var btn = $("btn-back");
     if (btn) btn.disabled = !on;
   }
 
@@ -286,6 +298,7 @@ window.GSUI = (function () {
     renderBoard: renderBoard,
     setWordCardLocked: setWordCardLocked,
     setSkipEnabled: setSkipEnabled,
+    setBackEnabled: setBackEnabled,
     flashAnswer: flashAnswer,
     shakeAnswer: shakeAnswer,
     renderWaiting: renderWaiting,
